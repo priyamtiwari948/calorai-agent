@@ -1,13 +1,53 @@
+# CalorAI Logging Agent
+
+A conversational meal-logging agent built with LangGraph. Users describe what they ate in plain, messy language — including corrections, references to past meals, and food photos — and the agent logs it, tracks running totals, and remembers durable facts across sessions.
+
+## LangSmith Trace
+
+https://smith.langchain.com/public/e07253ff-e916-4e05-a9b9-f855f92e36b3/r/01a06646-13be-79f3-a674-11435f2ee6c8?start_time=2026-09-03T07%3A57%3A43.742955Z
+
+---
+
+## Project Overview
+
+CalorAI's product bet is that meal logging should feel like texting a friend — no forms, no dropdowns. This agent handles that end-to-end:
+
+- Logs meals from free-text descriptions ("had 2 parathas and chai")
+- Logs meals from photos, with a separate vision model
+- Handles corrections without double-counting ("actually that was 3 rotis not 2")
+- Resolves references like "same as yesterday" / "my usual" against real history and memory
+- Remembers durable facts (diet preference, usual meals, targets) across sessions
+- Decides for itself when to ask a clarifying question vs. just log a reasonable estimate
+
+## Setup / Installation
+
+**Requirements:** Python 3.10+, a free [Groq](https://console.groq.com) API key, a free [Google AI Studio](https://aistudio.google.com) API key (Gemini).
+
+\`\`\`bash
+git clone https://github.com/priyamtiwari948/calorai-agent.git
+cd calorai-agent
+
+python -m venv venv
+source venv/bin/activate      # Windows: venv\Scripts\activate
+
+pip install -r requirements.txt
+\`\`\`
+
+Create a `.env` file in the project root:
+\`\`\`
+GROQ_API_KEY=your_groq_key_here
+GOOGLE_API_KEY=your_gemini_key_here
+\`\`\`
 
 Initialize the database (creates `calorai.db`, a local SQLite file):
-```bash
+\`\`\`bash
 python db.py
-```
+\`\`\`
 
 Run the CLI:
-```bash
+\`\`\`bash
 python main.py
-```
+\`\`\`
 
 **CLI commands:**
 | Input | Behavior |
@@ -37,7 +77,7 @@ This satisfies the "do not run everything through one model" requirement with tw
 
 **When it's written:** the agent calls the `save_memory` tool itself, in the same turn a fact is stated ("i'm vegetarian btw"), guided by system-prompt instructions on what counts as memory-worthy (durable facts) vs. not (one-off meal details). No separate memory-extraction pass — this trades a small chance of the model missing a worth-remembering fact for zero extra latency/LLM calls per turn.
 
-**How it's retrieved:** *not* via the model remembering to call a tool every turn. Before every LLM call, `agent.py`'s `_load_memory_block()` pulls all of a user's facts and injects them as a short bullet list directly into the system prompt. This guarantees the facts are always in context without relying on the model's initiative, and stays cheap because there are only ever a handful of facts per user (no truncation/ranking logic needed at this scale). The `get_memory` tool still exists for the model to explicitly double-check a specific fact mid-conversation — observed in testing, e.g. the agent calling `get_memory` to confirm a user's vegetarian status before confirming a food photo.
+**How it's retrieved:** *not* via the model remembering to call a tool every turn. Before every LLM call, `agent.py`'s `_load_memory_block()` pulls all of a user's facts and injects them as a short bullet list directly into the system prompt. This guarantees the facts are always in context without relying on the model's initiative, and stays cheap because there are only ever a handful of facts per user (no truncation/ranking logic needed at this scale). The `get_memory` tool still exists for the model to explicitly double-check a specific fact mid-conversation.
 
 **What's explicitly NOT memory:** raw conversation history. Within one process run, the LangGraph message list gives short-term multi-turn context (so "actually 3 rotis" can resolve against the message just before it), but nothing here persists that transcript as long-term memory across sessions — only explicit `save_memory` calls do.
 
@@ -74,7 +114,7 @@ A single LangGraph ReAct-style loop (`agent` node ↔ `tools` node), not a multi
 
 ## Multimodal Handling
 
-- Images are sent to Gemini in a single call, together with any caption text, so Gemini itself reconciles them into **one** meal (e.g. "[photo] half of this was my brother's" → Gemini halves the portion estimate itself, rather than the image and caption becoming two separate downstream meals). Verified in testing: a photo of toast + 2 cups of tea with the caption "half of this was my brother's" produced a single estimate for ~1.5 slices and 1 cup, with the agent asking one confirming question rather than logging two meals.
+- Images are sent to Gemini in a single call, together with any caption text, so Gemini itself reconciles them into **one** meal (e.g. "[photo] half of this was my brother's" → Gemini halves the portion estimate itself, rather than the image and caption becoming two separate downstream meals).
 - Gemini returns structured JSON (via a Pydantic schema: `description`, `estimated_calories/protein/carbs/fat`, `is_ambiguous`, `ambiguity_note`) rather than free text — this is what lets ambiguity be programmatically detected and surfaced to the user instead of silently guessed past.
 - The vision result is converted to a plain text string (`image_to_agent_message`) and fed into the *same* text-agent turn used for typed messages — so there is exactly one place that decides what to log, regardless of input modality.
 
@@ -127,6 +167,7 @@ Measured with `time.time()` wrapped around each full turn (vision call + agent c
 
 - Wire up real multi-user session isolation to the CLI (schema already supports it)
 - Script the full test-conversation set as a small eval set with pass/fail criteria (a listed bonus), instead of manual CLI testing
+- Add LangSmith tracing for production-grade observability into the tool-call decisions
 - Investigate the Groq latency variance further (e.g. request timing breakdown, alternate model size) rather than only capping history
 - Add streaming responses for better perceived latency
 - Add a small set of unit tests around `correct_last_meal` and `get_daily_totals`, since those are the most correctness-sensitive tools
@@ -134,3 +175,4 @@ Measured with `time.time()` wrapped around each full turn (vision call + agent c
 ## Notes on AI Tool Usage
 
 Built with Claude as a coding partner throughout — architecture discussion, writing `db.py`/`tools.py`/`agent.py`/`vision.py`/`main.py`, debugging (including a couple of real issues: empty files that were never actually saved locally, a terminal paste mishap that created garbage files, an over-asking regression in the agent's clarifying-question behavior caught via manual testing, and the latency-growth issue traced to unbounded conversation history). All code was tested locally against the assignment's test conversation set before being treated as done.
+
