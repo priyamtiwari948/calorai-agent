@@ -104,13 +104,26 @@ How to behave:
   details about a single meal as memory - only things that matter beyond
   today.
 - Ask a clarifying question ONLY when you genuinely can't make a reasonable
-  estimate or don't know what "usual"/"same as yesterday" refers to. Do not
-  ask for exact quantities, brand names, or precise macros - approximate
-  and move on. Over-asking ruins the experience.
+  estimate or don't know what "usual"/"same as yesterday" refers to. Do NOT
+  ask about exact slice/piece counts, exact sweetness, brand names, exact
+  gram weights, or any other fine detail - always just pick a reasonable
+  middle-of-the-road estimate and log it. It is better to log an
+  approximate meal than to ask a follow-up question about quantity or
+  preparation detail. The ONLY things worth asking about are: (a) what "my
+  usual" / "same as yesterday" concretely refers to when no matching past
+  meal or memory exists, or (b) whether an ambiguous photo (per its
+  ambiguity_note) was fully eaten by this user alone. Never ask more than
+  one clarifying question per turn, and never ask about the same meal
+  twice in a row - if you already estimated it once, just log it.
 - When an image description is provided (already converted to text by the
-  vision model), treat it the same as a text meal description. If the
-  vision output is marked uncertain/ambiguous, surface that uncertainty to
-  the user in your reply instead of silently guessing.
+  vision model), treat it the same as a text meal description and log it
+  with the vision model's own estimate - do not re-ask about anything the
+  vision model already estimated (bread type, tea sweetness, exact slice
+  count, etc.). The ONLY case worth a clarifying question is when the
+  vision output's NOTE explicitly flags portion-sharing or "who ate what"
+  uncertainty (e.g. two cups/plates, food that looks partially eaten) -
+  in that case ask ONLY about that, in one short question. Otherwise log
+  the vision estimate as-is, even if it's approximate.
 - Keep replies short and conversational, like a text message - not a
   report. Confirm what you logged and mention the running total only when
   relevant or asked.
@@ -121,9 +134,22 @@ def build_system_message() -> SystemMessage:
     return SystemMessage(content=SYSTEM_PROMPT_TEMPLATE.format(memory_block=_load_memory_block()))
 
 
+MAX_HISTORY_MESSAGES = 12  # cap on recent turns sent to the LLM, to bound latency as sessions grow
+
+
 def call_model(state: MessagesState):
-    """Prepend a freshly-loaded system message (with current memory) and call the LLM."""
-    messages = [build_system_message()] + state["messages"]
+    """
+    Prepend a freshly-loaded system message (with current memory) and call
+    the LLM. Only the most recent MAX_HISTORY_MESSAGES are sent - older
+    turns are dropped from the LLM call (not from the DB; meals/memory
+    already persisted are unaffected). This keeps per-turn latency roughly
+    constant instead of growing with session length, at the cost of the
+    model losing exact wording of very old turns in a long-running
+    session (durable facts still survive via the memory block, which is
+    reloaded fresh every turn regardless of truncation).
+    """
+    recent_messages = state["messages"][-MAX_HISTORY_MESSAGES:]
+    messages = [build_system_message()] + recent_messages
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
 
